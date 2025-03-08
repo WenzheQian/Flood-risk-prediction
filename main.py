@@ -11,7 +11,7 @@ from model import TimeSeriesTransformer
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Time Series Transformer Training')
-    parser.add_argument('--data_path', type=str, default="/root/autodl-tmp/H2O-main/transformer-main/135.xlsx",
+    parser.add_argument('--data_path', type=str, default="",
                         help='Path to the data file')
     parser.add_argument('--batch_size', type=int, default=32,
                         help='Input batch size for training')
