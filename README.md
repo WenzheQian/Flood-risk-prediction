@@ -21,5 +21,5 @@ python main.py
 ```
 ## Example Output
 <div align="center">
-  <img src="./asserts/mambayolo.jpg" width="1200px"/>
+  <img src=".result.png" width="1200px"/>
 </div>
