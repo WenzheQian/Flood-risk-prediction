@@ -10,7 +10,7 @@ import argparse
 from model import TimeSeriesTransformer
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Time Series Transformer Training')
+    parser = argparse.ArgumentParser(description='Time Series Transformer')
     parser.add_argument('--data_path', type=str, default="",
                         help='Path to the data file')
     parser.add_argument('--batch_size', type=int, default=32,
@@ -21,21 +21,23 @@ def parse_args():
                         help='Number of epochs to train')
     parser.add_argument('--lr', type=float, default=1e-3,
                         help='Learning rate')
-    parser.add_argument('--test_size', type=float, default=0.4,
+    parser.add_argument('--test_size', type=float, default=,
                         help='')
-    parser.add_argument('--val_size', type=float, default=0.5,
+    parser.add_argument('--val_size', type=float, default=,
                         help='')
     parser.add_argument('--input_size', type=int, default=2,
-                        help='Number of features in input data')
+                        help='')
     parser.add_argument('--no_plot', action='store_true',
                         help='Disable plotting')
+    parser.add_argument('--save_path', type=str, default='./best_model.pth',
+                        help='Path to save best model')
     return parser.parse_args()
 
 def create_sequences(data, window_length):
     xs, ys = [], []
-    for i in range(len(data)-window_length):
-        x = data[i:(i+window_length), :2]
-        y = data[i+window_length, 1]
+    for i in range(len(data) - window_length):
+        x = data[i:(i + window_length), :2]
+        y = data[i + window_length, 1]
         xs.append(x)
         ys.append(y)
     return np.array(xs), np.array(ys)
@@ -51,8 +53,10 @@ def prepare_data(data_path, window_length, test_size, val_size):
     
     return X_train, X_val, X_test, y_train, y_val, y_test
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, epochs):
+def train_model(model, train_loader, val_loader, criterion, optimizer, epochs, save_path):
     train_losses, val_losses = [], []
+    best_r2 = float('-inf')  
+
     for epoch in range(epochs):
         model.train()
         epoch_loss = 0
@@ -63,17 +67,37 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, epochs):
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
-        train_losses.append(epoch_loss/len(train_loader))
+        train_losses.append(epoch_loss / len(train_loader))
 
         model.eval()
         val_loss = 0
+        val_preds, val_true = [], []
         with torch.no_grad():
             for X_val, y_val in val_loader:
                 output = model(X_val)
                 val_loss += criterion(output.squeeze(), y_val).item()
-        val_losses.append(val_loss/len(val_loader))
+                output_clipped = torch.clamp(output, min=0.0)
+                val_preds.extend(output_clipped.squeeze().tolist())
+                val_true.extend(y_val.tolist())
+                
+        val_preds = torch.FloatTensor(val_preds)
+        val_true = torch.FloatTensor(val_true)
 
-        print(f'Epoch {epoch+1:03}: Train Loss {train_losses[-1]:.4f}, Val Loss {val_losses[-1]:.4f}')
+        mse = nn.MSELoss()(val_preds, val_true)
+        mae = nn.L1Loss()(val_preds, val_true)
+        ss_tot = torch.sum((val_true - torch.mean(val_true))**2)
+        ss_res = torch.sum((val_true - val_preds)**2)
+        r2 = 1 - ss_res / ss_tot
+        
+        val_loss /= len(val_loader)
+        val_losses.append(val_loss)
+        
+        if r2 > best_r2:
+            best_r2 = r2
+            torch.save(model.state_dict(), save_path)
+            print(f"Epoch {epoch+1:03}: New best model is saved")
+
+        print(f'Epoch {epoch+1:03}: Train Loss {train_losses[-1]:.4f}, Val Loss {val_losses[-1]:.4f}, MSE: {mse:.4f}, MAE: {mae:.4f},R² Score: {r2:.4f} ')
     
     return train_losses, val_losses
 
@@ -86,16 +110,16 @@ def evaluate_model(model, test_loader):
             output_clipped = torch.clamp(output, min=0.0)
             test_preds.extend(output_clipped.squeeze().tolist())
             test_true.extend(y_test.tolist())
-    
+
     test_preds = torch.FloatTensor(test_preds)
     test_true = torch.FloatTensor(test_true)
-    
+
     mse = nn.MSELoss()(test_preds, test_true)
     mae = nn.L1Loss()(test_preds, test_true)
     ss_tot = torch.sum((test_true - torch.mean(test_true))**2)
     ss_res = torch.sum((test_true - test_preds)**2)
     r2 = 1 - ss_res / ss_tot
-    
+
     return test_preds, test_true, mse.item(), mae.item(), r2.item()
 
 def main():
@@ -104,52 +128,57 @@ def main():
     X_train, X_val, X_test, y_train, y_val, y_test = prepare_data(
         args.data_path, args.window_length, args.test_size, args.val_size
     )
-    
+
     train_data = TensorDataset(torch.FloatTensor(X_train), torch.FloatTensor(y_train))
     val_data = TensorDataset(torch.FloatTensor(X_val), torch.FloatTensor(y_val))
     test_data = TensorDataset(torch.FloatTensor(X_test), torch.FloatTensor(y_test))
-    
+
     train_loader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=args.batch_size)
     test_loader = DataLoader(test_data, batch_size=args.batch_size)
-    
+
     model = TimeSeriesTransformer(
         input_size=args.input_size,
         seq_length=args.window_length
     )
     criterion = nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-    
+
+    print("Training the model...")
     train_losses, val_losses = train_model(
-        model, train_loader, val_loader, criterion, optimizer, args.epochs
+        model, train_loader, val_loader, criterion, optimizer, args.epochs, args.save_path
     )
-    
+
+    print(f"\nLoading best model from {args.save_path} for testing...")
+    model.load_state_dict(torch.load(args.save_path))
+    model.eval()
+
     test_preds, test_true, mse, mae, r2 = evaluate_model(model, test_loader)
-    
+
     print(f'\nTest Results:')
     print(f'MSE: {mse:.4f}')
     print(f'MAE: {mae:.4f}')
     print(f'R² Score: {r2:.4f}')
-    
+
     if not args.no_plot:
         plt.figure(figsize=(12, 5))
-        
+
         plt.subplot(1, 2, 1)
         plt.plot(train_losses, label='Train Loss')
         plt.plot(val_losses, label='Validation Loss')
         plt.xlabel('Epoch')
         plt.ylabel('MSE Loss')
         plt.legend()
-        plt.title('Training Curves')
-        
+        plt.title('Training')
+
         plt.subplot(1, 2, 2)
         plt.plot(test_true, label='True Values')
         plt.plot(test_preds, label='Predictions')
         plt.xlabel('Time Step')
         plt.ylabel('preN103 Value')
         plt.legend()
-        plt.title('Test Set Predictions')
-        
+        plt.title('Testing')
+
         plt.tight_layout()
         plt.show()
 
