@@ -29,7 +29,7 @@ def parse_args():
                         help='')
     parser.add_argument('--no_plot', action='store_true',
                         help='Disable plotting')
-    parser.add_argument('--save_path', type=str, default='./best_model.pth',
+    parser.add_argument('--save_path', type=str, default='best_model.pth',
                         help='Path to save best model')
     return parser.parse_args()
 
